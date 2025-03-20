@@ -77,10 +77,6 @@ Vous pouvez personnaliser l'application en modifiant les paramètres suivants da
    - Spécifiez éventuellement une page 404 personnalisée
    - Enregistrez la configuration
 
-## Captures d'écran
-
-*Ajoutez des captures d'écran de l'application ici*
-
 ## Dépannage
 
 Si vous rencontrez des erreurs lors de l'enregistrement ou de la suppression des configurations, vérifiez que :
