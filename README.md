@@ -1,100 +1,139 @@
 # Gestionnaire de Configuration Nginx
 
-Une application web en PHP permettant de gérer facilement les configurations Nginx pour vos sites web et applications.
+Application web PHP pour gérer facilement les configurations Nginx pour vos sites web et applications.
 
 ## Fonctionnalités
 
-- Interface responsive et adaptative qui s'ajuste à la taille de l'écran
-- Explorateur de fichiers arborescent avec possibilité de déplier/replier les répertoires
+- Interface responsive avec explorateur de fichiers arborescent
 - Recherche en temps réel des répertoires
 - Affichage des répertoires présents dans `/var/www/html`
 - Association de répertoires à des ports spécifiques
-- Modification des ports des configurations existantes via une interface modale
+- Modification des ports des configurations existantes
 - Protection de la configuration par défaut contre la modification et la suppression
+- Configuration toujours affichée en bas de la liste
 - Activation/désactivation de l'autoindex pour chaque configuration
 - Définition d'une page 404 personnalisée (optionnelle)
-- Lecture des configurations Nginx existantes
-- Suppression des configurations existantes (sauf "default")
-- Génération dynamique des blocs de configuration Nginx
-- Gestion des liens symboliques dans sites-enabled
+- Gestion des configurations Nginx et des liens symboliques
 - Rechargement de la configuration Nginx
+
+## Prérequis
+
+- Serveur Linux avec Nginx installé
+- PHP 7.4 ou supérieur
+- Accès sudo pour certaines commandes
+- Serveur web (Apache ou Nginx) configuré pour PHP
 
 ## Installation
 
-1. Clonez ce dépôt dans un répertoire accessible par votre serveur web (par exemple, `/var/www/html/nginx-manager`)
+1. Clonez le dépôt dans un répertoire accessible par votre serveur web
 ```bash
 git clone https://github.com/votre-utilisateur/nginx-manager.git /var/www/html/nginx-manager
 ```
-2. Assurez-vous que le serveur web a les permissions nécessaires sur ce répertoire
+
+2. Donnez les permissions appropriées
 ```bash
-chown -R www-data:www-data /var/www/html/nginx-manager
+sudo chown -R www-data:www-data /var/www/html/nginx-manager
+sudo chmod -R 755 /var/www/html/nginx-manager
 ```
-3. Accédez à l'application via votre navigateur à l'adresse http://votre-serveur/nginx-manager/
 
-### Note sur les permissions
+3. Configurez les permissions sudo pour l'utilisateur www-data
+```bash
+sudo echo 'www-data ALL=(ALL) NOPASSWD: /usr/sbin/nginx -t, /bin/systemctl reload nginx, /bin/rm /etc/nginx/sites-enabled/*, /bin/rm /etc/nginx/sites-available/*, /bin/mv /tmp/nginx-config-temp-* /etc/nginx/sites-available/*, /bin/ln -s /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*' | sudo tee /etc/sudoers.d/nginx-manager
+sudo chmod 440 /etc/sudoers.d/nginx-manager
+```
 
-L'application est conçue pour fonctionner avec l'authentification root. Une fois que l'utilisateur est authentifié en tant que root, l'application utilise ces identifiants pour exécuter les commandes nécessaires (création/suppression de fichiers, gestion des liens symboliques, rechargement Nginx).
+4. Vérifiez que les répertoires de configuration Nginx existent
+```bash
+sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+```
 
-**IMPORTANT** : Pour des raisons de sécurité, cette approche présente des risques significatifs et ne devrait être utilisée que dans un environnement contrôlé et sécurisé.
+5. Assurez-vous que votre configuration principale de Nginx inclut les sites-enabled
+```bash
+sudo grep -q "include /etc/nginx/sites-enabled/\*;" /etc/nginx/nginx.conf || echo "include /etc/nginx/sites-enabled/*;" | sudo tee -a /etc/nginx/nginx.conf
+```
 
-### Configuration du serveur web
+6. Créez un fichier de configuration pour protéger l'accès à nginx-manager (optionnel mais recommandé)
+```bash
+sudo tee /etc/nginx/sites-available/nginx-manager <<EOL
+server {
+    listen 80;
+    server_name nginx-manager.votre-domaine.com;
+    
+    root /var/www/html/nginx-manager;
+    index index.php;
+    
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+    }
+    
+    location / {
+        try_files \$uri \$uri/ /index.php?\$args;
+    }
+    
+    # Restreindre l'accès par IP (recommandé)
+    # allow 192.168.1.0/24;  # Exemple : autoriser le réseau local
+    # deny all;  # Refuser toutes les autres IP
+}
+EOL
 
-Pour que l'application puisse utiliser la session root correctement, le script PHP doit avoir les permissions pour exécuter des commandes shell. L'utilisateur du serveur web doit donc avoir les permissions nécessaires.
+sudo ln -s /etc/nginx/sites-available/nginx-manager /etc/nginx/sites-enabled/
+```
 
-## Sécurité
+7. Testez et rechargez la configuration Nginx
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
 
-L'application utilise l'authentification avec le compte root du système pour toutes les opérations. Considérations importantes :
+8. Accédez à l'application via votre navigateur à l'adresse http://votre-serveur/nginx-manager/
 
-1. Cette approche présente des risques de sécurité significatifs car elle utilise directement le compte root
-2. Utilisez HTTPS pour sécuriser les communications et empêcher l'interception du mot de passe root
-3. Restreignez l'accès à l'application via des règles de pare-feu ou des configurations Nginx
-4. Envisagez d'utiliser des méthodes d'authentification plus sécurisées et des permissions plus limitées dans un environnement de production
-5. Si possible, utilisez un utilisateur avec des permissions limitées plutôt que root
+## Configuration détaillée des permissions
 
-## Personnalisation
+L'application nécessite des permissions élevées pour gérer les configurations Nginx. Voici la liste détaillée des commandes qui doivent être autorisées sans mot de passe pour l'utilisateur www-data:
 
-Vous pouvez personnaliser l'application en modifiant les paramètres suivants dans `index.php` :
-
-- `$baseDir` : Le répertoire racine à explorer (actuellement limité à `/var/www/html`)
-- `$nginxSitesAvailable` : Le chemin vers le répertoire des sites disponibles de Nginx
-- `$nginxSitesEnabled` : Le chemin vers le répertoire des sites activés de Nginx
+1. `/usr/sbin/nginx -t` - Pour tester la syntaxe des configurations
+2. `/bin/systemctl reload nginx` - Pour recharger Nginx après modifications
+3. `/bin/rm /etc/nginx/sites-enabled/*` - Pour supprimer les liens symboliques
+4. `/bin/rm /etc/nginx/sites-available/*` - Pour supprimer les fichiers de configuration
+5. `/bin/mv /tmp/nginx-config-temp-* /etc/nginx/sites-available/*` - Pour déplacer les fichiers temporaires
+6. `/bin/ln -s /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*` - Pour créer des liens symboliques
 
 ## Utilisation
 
-1. Accédez à l'application via votre navigateur
-2. Connectez-vous avec le mot de passe root du système
-3. Dans le panneau "Configurations existantes", vous pouvez :
-   - Voir toutes les configurations existantes avec leur nom, chemin et port
-   - Modifier le port d'une configuration existante (sauf "default")
-   - Supprimer une configuration existante (sauf "default")
-   - Recharger Nginx après avoir modifié les configurations
-4. Dans le panneau "Créer une nouvelle configuration" :
-   - Parcourez l'arborescence de répertoires en dépliant/repliant les dossiers
-   - Utilisez la barre de recherche pour trouver rapidement un répertoire spécifique
-   - Sélectionnez un répertoire en cliquant dessus
-   - Spécifiez un port pour la nouvelle configuration
-   - Activez ou désactivez l'autoindex
-   - Spécifiez éventuellement une page 404 personnalisée
-   - Enregistrez la configuration
+1. Accédez à l'application dans votre navigateur
+2. Connectez-vous avec les identifiants configurés
+3. Pour créer une nouvelle configuration:
+   - Naviguez dans l'arborescence et sélectionnez un répertoire 
+   - Spécifiez un port non utilisé
+   - Activez ou désactivez l'autoindex selon vos besoins
+   - Ajoutez éventuellement une page 404 personnalisée
+   - Cliquez sur "Enregistrer la configuration"
+4. Pour gérer les configurations existantes:
+   - Vous pouvez modifier le port d'une configuration (sauf default)
+   - Vous pouvez supprimer une configuration (sauf default)
+   - La configuration default apparaît toujours en bas de la liste
+5. N'oubliez pas de cliquer sur "Recharger Nginx" après les modifications
+
+## Sécurité
+
+Cette application dispose d'un accès élevé au système, prenez ces précautions:
+
+1. Limitez strictement l'accès à nginx-manager (par IP, authentification, etc.)
+2. Utilisez HTTPS pour toutes les communications avec l'application
+3. Vérifiez régulièrement les journaux pour détecter des activités suspectes
+4. Ne déployez cette application que sur des serveurs internes ou de développement
+5. Envisagez d'utiliser des solutions plus sécurisées en production
 
 ## Dépannage
 
-Si vous rencontrez des erreurs lors de l'enregistrement ou de la suppression des configurations, vérifiez que :
+Si vous rencontrez des problèmes:
 
-1. Vous êtes correctement authentifié en tant que root
-2. Le serveur web a les permissions nécessaires pour exécuter des commandes shell
-3. Les chemins vers les répertoires de configuration Nginx sont corrects
-4. Les journaux d'erreurs se trouvent dans `/tmp/nginx-manager-error.log`
-
-## Contribuer
-
-Les contributions sont les bienvenues ! N'hésitez pas à soumettre des pull requests pour améliorer cette application.
-
-1. Forkez le projet
-2. Créez votre branche de fonctionnalité (`git checkout -b feature/AmazingFeature`)
-3. Committez vos changements (`git commit -m 'Add some AmazingFeature'`)
-4. Poussez vers la branche (`git push origin feature/AmazingFeature`)
-5. Ouvrez une Pull Request
+1. Vérifiez les journaux d'erreur: `/tmp/nginx-manager-error.log`
+2. Vérifiez que les permissions sudoers sont correctement configurées
+3. Assurez-vous que les chemins dans functions.php correspondent à votre système
+4. Vérifiez les permissions des répertoires de Nginx
+5. Message "Impossible d'écrire le fichier de configuration": vérifiez les permissions sudoers
+6. Message "Impossible de désactiver la configuration": vérifiez les permissions pour supprimer les liens symboliques
 
 ## Licence
 

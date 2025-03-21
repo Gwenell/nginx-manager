@@ -148,6 +148,8 @@ function getNginxConfigurations() {
     // Parcourir les fichiers du répertoire
     $files = scandir($nginxSitesAvailable);
     
+    $defaultConfig = null;
+    
     foreach ($files as $file) {
         // Ignorer les entrées spéciales (. et ..) et les fichiers cachés
         if ($file === '.' || $file === '..' || substr($file, 0, 1) === '.') {
@@ -174,13 +176,25 @@ function getNginxConfigurations() {
             preg_match($portPattern, $content, $portMatches);
             $port = isset($portMatches[1]) ? $portMatches[1] : '';
             
-            // Ajouter la configuration au tableau des résultats
-            $configs[] = [
+            $configData = [
                 'name' => $file,
                 'root' => $root,
                 'port' => $port
             ];
+            
+            // Si c'est la configuration par défaut, la stocker séparément
+            if ($file === 'default') {
+                $defaultConfig = $configData;
+            } else {
+                // Sinon, l'ajouter au tableau des résultats
+                $configs[] = $configData;
+            }
         }
+    }
+    
+    // Ajouter la configuration par défaut à la fin du tableau si elle existe
+    if ($defaultConfig !== null) {
+        $configs[] = $defaultConfig;
     }
     
     debug_log("Lecture terminée, " . count($configs) . " configurations trouvées");
@@ -229,10 +243,25 @@ function saveNginxConfig($path, $port, $autoindex, $custom404 = '') {
     // Générer le contenu de la configuration
     $configContent = generateNginxConfig($path, $port, $autoindex, $custom404);
     
-    // Écrire la configuration dans le fichier
-    $writeResult = file_put_contents($configPath, $configContent);
-    if ($writeResult === false) {
-        debug_log("Erreur: Impossible d'écrire la configuration dans $configPath");
+    // Créer un fichier temporaire avec la configuration
+    $tempFile = '/tmp/nginx-config-temp-' . time();
+    $tempWriteResult = file_put_contents($tempFile, $configContent);
+    
+    if ($tempWriteResult === false) {
+        debug_log("Erreur: Impossible d'écrire la configuration temporaire dans $tempFile");
+        return ['success' => false, 'message' => 'Impossible de créer le fichier de configuration temporaire.'];
+    }
+    
+    // Déplacer le fichier temporaire vers l'emplacement de configuration avec sudo
+    $moveCmd = "sudo mv $tempFile $configPath 2>&1";
+    $moveOutput = [];
+    $moveReturnVar = 0;
+    
+    exec($moveCmd, $moveOutput, $moveReturnVar);
+    
+    if ($moveReturnVar !== 0) {
+        $errorMessage = implode("\n", $moveOutput);
+        debug_log("Erreur: Impossible de déplacer le fichier vers $configPath: $errorMessage");
         return ['success' => false, 'message' => 'Impossible d\'écrire le fichier de configuration.'];
     }
     
@@ -241,13 +270,20 @@ function saveNginxConfig($path, $port, $autoindex, $custom404 = '') {
     
     // Supprimer le lien s'il existe déjà
     if (file_exists($linkTarget)) {
-        unlink($linkTarget);
+        $unlinkCmd = "sudo rm $linkTarget 2>&1";
+        exec($unlinkCmd);
     }
     
-    // Créer le nouveau lien
-    $linkResult = symlink($configPath, $linkTarget);
-    if (!$linkResult) {
-        debug_log("Erreur: Impossible de créer le lien symbolique de $configPath vers $linkTarget");
+    // Créer le nouveau lien avec sudo
+    $linkCmd = "sudo ln -s $configPath $linkTarget 2>&1";
+    $linkOutput = [];
+    $linkReturnVar = 0;
+    
+    exec($linkCmd, $linkOutput, $linkReturnVar);
+    
+    if ($linkReturnVar !== 0) {
+        $errorMessage = implode("\n", $linkOutput);
+        debug_log("Erreur: Impossible de créer le lien symbolique de $configPath vers $linkTarget: $errorMessage");
         return ['success' => false, 'message' => 'Impossible de créer le lien symbolique pour activer la configuration.'];
     }
     
@@ -389,17 +425,29 @@ function deleteNginxConfig($configName) {
     
     // Supprimer le lien symbolique s'il existe
     if (file_exists($linkPath)) {
-        $unlinkResult = unlink($linkPath);
-        if (!$unlinkResult) {
-            debug_log("Erreur: Impossible de supprimer le lien symbolique $linkPath");
+        $unlinkCmd = "sudo rm $linkPath 2>&1";
+        $unlinkOutput = [];
+        $unlinkReturnVar = 0;
+        
+        exec($unlinkCmd, $unlinkOutput, $unlinkReturnVar);
+        
+        if ($unlinkReturnVar !== 0) {
+            $errorMessage = implode("\n", $unlinkOutput);
+            debug_log("Erreur: Impossible de supprimer le lien symbolique $linkPath: $errorMessage");
             return ['success' => false, 'message' => 'Impossible de désactiver la configuration.'];
         }
     }
     
     // Supprimer le fichier de configuration
-    $deleteResult = unlink($configPath);
-    if (!$deleteResult) {
-        debug_log("Erreur: Impossible de supprimer le fichier $configPath");
+    $deleteCmd = "sudo rm $configPath 2>&1";
+    $deleteOutput = [];
+    $deleteReturnVar = 0;
+    
+    exec($deleteCmd, $deleteOutput, $deleteReturnVar);
+    
+    if ($deleteReturnVar !== 0) {
+        $errorMessage = implode("\n", $deleteOutput);
+        debug_log("Erreur: Impossible de supprimer le fichier $configPath: $errorMessage");
         return ['success' => false, 'message' => 'Impossible de supprimer le fichier de configuration.'];
     }
     
@@ -466,8 +514,8 @@ function updateNginxConfigPort($configName, $newPort) {
 /**
  * Recharge la configuration Nginx pour appliquer les modifications
  * 
- * Cette fonction exécute la commande 'nginx -t' pour tester la configuration,
- * puis 'systemctl reload nginx' pour l'appliquer si le test est réussi.
+ * Cette fonction exécute la commande 'sudo nginx -t' pour tester la configuration,
+ * puis 'sudo systemctl reload nginx' pour l'appliquer si le test est réussi.
  * 
  * @return array Résultat de l'opération (succès/échec et message)
  */
@@ -478,7 +526,7 @@ function reloadNginx() {
     $testOutput = [];
     $testReturnVar = 0;
     
-    exec('nginx -t 2>&1', $testOutput, $testReturnVar);
+    exec('sudo nginx -t 2>&1', $testOutput, $testReturnVar);
     
     // Si le test échoue, retourner l'erreur
     if ($testReturnVar !== 0) {
@@ -491,7 +539,7 @@ function reloadNginx() {
     $reloadOutput = [];
     $reloadReturnVar = 0;
     
-    exec('systemctl reload nginx 2>&1', $reloadOutput, $reloadReturnVar);
+    exec('sudo systemctl reload nginx 2>&1', $reloadOutput, $reloadReturnVar);
     
     // Si le rechargement échoue, retourner l'erreur
     if ($reloadReturnVar !== 0) {
